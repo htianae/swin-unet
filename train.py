@@ -5,20 +5,22 @@ import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
 from networks.vision_transformer import SwinUnet as ViT_seg
-from trainer import trainer_hr_extreme
+from trainer import trainer_debris_processed
 from config import get_config
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str,
-                    default='../data/HR-Extreme', help='root dir for data')
+                    default='../data/debris_processed_33', help='root dir or npz file for data')
 parser.add_argument('--dataset', type=str,
-                    default='HRExtreme', help='experiment_name')
+                    default='DebrisProcessed', help='experiment_name')
 parser.add_argument('--list_dir', type=str,
-                    default='', help='unused for HR-Extreme baseline')
+                    default='', help='unused')
 parser.add_argument('--num_classes', type=int,
-                    default=69, help='output channel of network')
+                    default=33, help='output channel of network')
+parser.add_argument('--history_steps', type=int,
+                    default=2, help='number of input time steps')
 parser.add_argument('--in_chans', type=int,
-                    default=138, help='input channel of network')
+                    default=66, help='flattened input channels for config bookkeeping')
 parser.add_argument('--output_dir', type=str, help='output dir')
 parser.add_argument('--max_iterations', type=int,
                     default=30000, help='maximum epoch number to train')
@@ -29,10 +31,10 @@ parser.add_argument('--batch_size', type=int,
 parser.add_argument('--n_gpu', type=int, default=1, help='total gpu')
 parser.add_argument('--deterministic', type=int, default=1,
                     help='whether use deterministic training')
-parser.add_argument('--base_lr', type=float, default=0.01,
+parser.add_argument('--base_lr', type=float, default=1e-4,
                     help='regression network learning rate')
 parser.add_argument('--img_size', type=int,
-                    default=160, help='input patch size of network input')
+                    default=320, help='input patch size of network input')
 parser.add_argument('--seed', type=int,
                     default=1234, help='random seed')
 parser.add_argument('--cfg', type=str, required=True, metavar="FILE", help='path to config file', )
@@ -90,20 +92,22 @@ if __name__ == "__main__":
 
     dataset_name = args.dataset
     dataset_config = {
-        'HRExtreme': {
+        'DebrisProcessed': {
             'root_path': args.root_path,
             'list_dir': '',
-            'num_classes': 69,
+            'num_classes': 33,
             'in_chans': args.in_chans,
+            'history_steps': args.history_steps,
         },
     }
     if dataset_name not in dataset_config:
-        raise ValueError("Unsupported dataset '{}'. This baseline is configured for HRExtreme.".format(dataset_name))
+        raise ValueError("Unsupported dataset '{}'. This baseline is configured for DebrisProcessed.".format(dataset_name))
 
     if args.batch_size != 24 and args.batch_size % 6 == 0:
         args.base_lr *= args.batch_size / 24
     args.num_classes = dataset_config[dataset_name]['num_classes']
-    args.in_chans = dataset_config[dataset_name]['in_chans']
+    args.history_steps = dataset_config[dataset_name]['history_steps']
+    args.in_chans = args.history_steps * args.num_classes
     args.root_path = dataset_config[dataset_name]['root_path']
     args.list_dir = dataset_config[dataset_name]['list_dir']
     config = get_config(args)
@@ -115,30 +119,4 @@ if __name__ == "__main__":
     if config.MODEL.PRETRAIN_CKPT:
         net.load_from(config)
 
-    trainer_hr_extreme(args, net, args.output_dir)
-'''
-python train.py \
-  --dataset HRExtreme \
-  --cfg configs/swin_tiny_patch4_window7_224_lite.yaml \
-  --root_path /Users/tian/Desktop/HR-extreme/HR-Extreme_SEUS_maxpool160 \
-  --output_dir ./prediction/output1
-
-python test.py \
-  --dataset HRExtreme \
-  --cfg configs/swin_tiny_patch4_window7_224_lite.yaml \
-  --root_path /Users/tian/Desktop/HR-extreme/HR-Extreme_SEUS_maxpool160 \
-  --output_dir ./prediction/output1 \
-  --split test
-
-
-如果想把预测保存出来
-python test.py \
-  --dataset HRExtreme \
-  --cfg configs/swin_tiny_patch4_window7_224_lite.yaml \
-  --root_path /你的/npz目录 \
-  --output_dir ./model_out/weather \
-  --split test \
-  --save_predictions
-
-
-'''
+    trainer_debris_processed(args, net, args.output_dir)

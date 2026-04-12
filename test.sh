@@ -20,19 +20,19 @@ fi
 if [ $data_dir ]; then
     DATA_DIR=$data_dir
 else
-    DATA_DIR='../data/HR-Extreme'
+    DATA_DIR='../data/debris_processed_33'
 fi
 
 if [ $learning_rate ]; then
     LEARNING_RATE=$learning_rate
 else
-    LEARNING_RATE=0.05
+    LEARNING_RATE=0.0001
 fi
 
 if [ $img_size ]; then
     IMG_SIZE=$img_size
 else
-    IMG_SIZE=160
+    IMG_SIZE=320
 fi
 
 if [ $batch_size ]; then
@@ -42,4 +42,4 @@ else
 fi
 
 echo "start test model"
-python test.py --dataset HRExtreme --cfg $CFG --root_path $DATA_DIR --output_dir $OUT_DIR --img_size $IMG_SIZE --base_lr $LEARNING_RATE --batch_size $BATCH_SIZE --split test
+python test.py --dataset DebrisProcessed --cfg $CFG --root_path $DATA_DIR --output_dir $OUT_DIR --img_size $IMG_SIZE --base_lr $LEARNING_RATE --batch_size $BATCH_SIZE --split test

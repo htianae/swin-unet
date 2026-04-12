@@ -23,9 +23,9 @@ _C.DATA.BATCH_SIZE = 128
 # Path to dataset, could be overwritten by command line argument
 _C.DATA.DATA_PATH = ''
 # Dataset name
-_C.DATA.DATASET = 'hr_extreme'
+_C.DATA.DATASET = 'debris_processed'
 # Input image size
-_C.DATA.IMG_SIZE = 160
+_C.DATA.IMG_SIZE = 320
 # Interpolation to resize image (random, bilinear, bicubic)
 _C.DATA.INTERPOLATION = 'bicubic'
 # Use zipped dataset instead of folder dataset
@@ -50,7 +50,7 @@ _C.MODEL.NAME = 'swin_tiny_patch4_window7_224'
 _C.MODEL.PRETRAIN_CKPT = None
 _C.MODEL.RESUME = ''
 # Number of classes, overwritten in data preparation
-_C.MODEL.NUM_CLASSES = 69
+_C.MODEL.NUM_CLASSES = 33
 # Dropout rate
 _C.MODEL.DROP_RATE = 0.0
 # Drop path rate
@@ -61,10 +61,10 @@ _C.MODEL.LABEL_SMOOTHING = 0.1
 # Swin Transformer parameters
 _C.MODEL.SWIN = CN()
 _C.MODEL.SWIN.PATCH_SIZE = 4
-_C.MODEL.SWIN.IN_CHANS = 69
-_C.MODEL.SWIN.RAW_IN_CHANS = 138
+_C.MODEL.SWIN.IN_CHANS = 33
+_C.MODEL.SWIN.RAW_IN_CHANS = 66
 _C.MODEL.SWIN.HISTORY_STEPS = 2
-_C.MODEL.SWIN.VARS_PER_STEP = 69
+_C.MODEL.SWIN.VARS_PER_STEP = 33
 _C.MODEL.SWIN.EMBED_DIM = 96
 _C.MODEL.SWIN.DEPTHS = [2, 2, 6, 2]
 _C.MODEL.SWIN.DECODER_DEPTHS = [2, 2, 6, 2]
@@ -85,7 +85,7 @@ _C.TRAIN.START_EPOCH = 0
 _C.TRAIN.EPOCHS = 300
 _C.TRAIN.WARMUP_EPOCHS = 20
 _C.TRAIN.WEIGHT_DECAY = 0.05
-_C.TRAIN.BASE_LR = 5e-4
+_C.TRAIN.BASE_LR = 1e-4
 _C.TRAIN.WARMUP_LR = 5e-7
 _C.TRAIN.MIN_LR = 5e-6
 # Clip gradient norm

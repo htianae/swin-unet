@@ -1,5 +1,5 @@
-from .hr_extreme_dataset import (
-    HRExtremeDataset,
-    build_hr_extreme_datasets,
-    split_hr_extreme_dataset,
+from .debris_processed_dataset import (
+    DebrisProcessedDataset,
+    build_debris_processed_datasets,
+    split_debris_processed_dataset,
 )

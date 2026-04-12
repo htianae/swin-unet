@@ -1,16 +1,16 @@
 DATA:
-  IMG_SIZE: 160
+  IMG_SIZE: 320
 MODEL:
   TYPE: swin
-  NAME: swin_tiny_patch4_window7_160
-  NUM_CLASSES: 69
+  NAME: swin_tiny_patch4_window5_320
+  NUM_CLASSES: 33
   DROP_PATH_RATE: 0.2
   PRETRAIN_CKPT: null
   SWIN:
-    IN_CHANS: 69
-    RAW_IN_CHANS: 138
+    IN_CHANS: 33
+    RAW_IN_CHANS: 66
     HISTORY_STEPS: 2
-    VARS_PER_STEP: 69
+    VARS_PER_STEP: 33
     FINAL_UPSAMPLE: "expand_first"
     EMBED_DIM: 96
     DEPTHS: [ 2, 2, 2, 2 ]

@@ -45,7 +45,7 @@ class TemporalConcatFusion(nn.Module):
 
 
 class SwinUnet(nn.Module):
-    def __init__(self, config, img_size=160, num_classes=69, zero_head=False, vis=False):
+    def __init__(self, config, img_size=320, num_classes=33, zero_head=False, vis=False):
         super(SwinUnet, self).__init__()
         self.num_classes = num_classes
         self.zero_head = zero_head
@@ -86,8 +86,15 @@ class SwinUnet(nn.Module):
                                 use_checkpoint=config.TRAIN.USE_CHECKPOINT)
 
     def _fuse_temporal_inputs(self, x):
-        batch_size, _, height, width = x.shape
-        x = x.view(batch_size, self.history_steps, self.vars_per_step, height, width)
+        if x.ndim != 5:
+            raise ValueError("Expected temporal input with shape (B, T, C, H, W), got {}".format(tuple(x.shape)))
+        batch_size, time_steps, channels, _, _ = x.shape
+        if time_steps != self.history_steps or channels != self.vars_per_step:
+            raise ValueError(
+                "Expected input shape (B, {}, {}, H, W), got {}".format(
+                    self.history_steps, self.vars_per_step, tuple(x.shape)
+                )
+            )
         encoded_steps = [
             self.shared_temporal_encoder(x[:, step_index])
             for step_index in range(self.history_steps)
@@ -95,12 +102,6 @@ class SwinUnet(nn.Module):
         return self.temporal_fusion(encoded_steps)
 
     def forward(self, x):
-        if x.size(1) != self.raw_in_chans:
-            raise ValueError(
-                "Expected input with {} channels, got {} channels.".format(
-                    self.raw_in_chans, x.size(1)
-                )
-            )
         fused_input = self._fuse_temporal_inputs(x)
         logits = self.swin_unet(fused_input)
         return logits

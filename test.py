@@ -12,23 +12,25 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from config import get_config
-from datasets.hr_extreme_dataset import build_hr_extreme_datasets
+from datasets.debris_processed_dataset import build_debris_processed_datasets
 from networks.vision_transformer import SwinUnet as ViT_seg
 
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str,
-                    default='../data/HR-Extreme',
-                    help='root dir containing either split folders or a flat directory of .npz files')
+                    default='../data/debris_processed_33',
+                    help='root dir or npz file containing the debris processed dataset')
 parser.add_argument('--dataset', type=str,
-                    default='HRExtreme', help='experiment_name')
+                    default='DebrisProcessed', help='experiment_name')
 parser.add_argument('--num_classes', type=int,
-                    default=69, help='output channel of network')
+                    default=33, help='output channel of network')
+parser.add_argument('--history_steps', type=int,
+                    default=2, help='number of input time steps')
 parser.add_argument('--in_chans', type=int,
-                    default=138, help='input channel of network')
+                    default=66, help='flattened input channels for config bookkeeping')
 parser.add_argument('--output_dir', type=str, required=True, help='directory containing checkpoints')
 parser.add_argument('--batch_size', type=int, default=4, help='batch size per gpu')
-parser.add_argument('--img_size', type=int, default=160, help='input patch size of network input')
+parser.add_argument('--img_size', type=int, default=320, help='input patch size of network input')
 parser.add_argument('--deterministic', type=int, default=1, help='whether use deterministic inference')
 parser.add_argument('--base_lr', type=float, default=0.01, help='unused placeholder to preserve config API')
 parser.add_argument('--seed', type=int, default=1234, help='random seed')
@@ -91,7 +93,7 @@ def _masked_rmse(prediction, target, mask):
 
 
 def _predict_next_frame(model, image_batch, num_target_channels):
-    last_frame = image_batch[:, -num_target_channels:, :, :]
+    last_frame = image_batch[:, -1]
     pred_residual = model(image_batch)
     pred_t1 = last_frame + pred_residual
     return pred_t1
@@ -99,14 +101,14 @@ def _predict_next_frame(model, image_batch, num_target_channels):
 
 def _select_dataset_split(args):
     split_file = args.split_file or os.path.join(args.output_dir, 'dataset_split.json')
-    train_dataset, val_dataset, test_dataset = build_hr_extreme_datasets(
+    train_dataset, val_dataset, test_dataset = build_debris_processed_datasets(
         args.root_path,
         seed=args.seed,
         val_split=args.val_split,
         test_split=args.test_split,
         split_file=split_file if os.path.isfile(split_file) else None,
-        input_channels=args.in_chans,
-        target_channels=args.num_classes,
+        history_steps=args.history_steps,
+        vars_per_step=args.num_classes,
         target_step_index=args.target_step_index,
     )
     split_map = {
@@ -176,17 +178,19 @@ if __name__ == "__main__":
     torch.cuda.manual_seed(args.seed)
 
     dataset_config = {
-        'HRExtreme': {
+        'DebrisProcessed': {
             'root_path': args.root_path,
-            'num_classes': 69,
+            'num_classes': 33,
             'in_chans': args.in_chans,
+            'history_steps': args.history_steps,
         },
     }
     if args.dataset not in dataset_config:
-        raise ValueError("Unsupported dataset '{}'. This baseline is configured for HRExtreme.".format(args.dataset))
+        raise ValueError("Unsupported dataset '{}'. This baseline is configured for DebrisProcessed.".format(args.dataset))
 
     args.num_classes = dataset_config[args.dataset]['num_classes']
-    args.in_chans = dataset_config[args.dataset]['in_chans']
+    args.history_steps = dataset_config[args.dataset]['history_steps']
+    args.in_chans = args.history_steps * args.num_classes
     args.root_path = dataset_config[args.dataset]['root_path']
     config = get_config(args)
 

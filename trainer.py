@@ -11,23 +11,23 @@ from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from datasets.hr_extreme_dataset import build_hr_extreme_datasets
+from datasets.debris_processed_dataset import build_debris_processed_datasets
 
 
 def _seed_worker(worker_id, base_seed):
     random.seed(base_seed + worker_id)
 
 
-def _build_hr_extreme_datasets(args, split_file):
-    train_dataset, val_dataset, test_dataset = build_hr_extreme_datasets(
+def _build_debris_processed_datasets(args, split_file):
+    train_dataset, val_dataset, test_dataset = build_debris_processed_datasets(
         args.root_path,
         seed=args.seed,
         val_split=args.val_split,
         test_split=args.test_split,
         split_file=split_file,
         save_split_file=split_file,
-        input_channels=args.in_chans,
-        target_channels=args.num_classes,
+        history_steps=args.history_steps,
+        vars_per_step=args.num_classes,
         target_step_index=args.target_step_index,
     )
     logging.info(
@@ -60,7 +60,7 @@ def _masked_rmse(prediction, target, mask):
 
 
 def _predict_next_frame(model, image_batch, num_target_channels):
-    last_frame = image_batch[:, -num_target_channels:, :, :]
+    last_frame = image_batch[:, -1]
     pred_residual = model(image_batch)
     pred_t1 = last_frame + pred_residual
     return pred_t1, pred_residual, last_frame
@@ -76,7 +76,7 @@ def _tensor_stats(name, tensor):
     )
 
 
-def trainer_hr_extreme(args, model, snapshot_path):
+def trainer_debris_processed(args, model, snapshot_path):
     logging.basicConfig(filename=snapshot_path + "/log.txt", level=logging.INFO,
                         format='[%(asctime)s.%(msecs)03d] %(message)s', datefmt='%H:%M:%S')
     logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
@@ -88,7 +88,7 @@ def trainer_hr_extreme(args, model, snapshot_path):
     worker_init_fn = partial(_seed_worker, base_seed=args.seed)
     split_file = os.path.join(snapshot_path, "dataset_split.json")
 
-    db_train, db_val = _build_hr_extreme_datasets(args, split_file=split_file)
+    db_train, db_val = _build_debris_processed_datasets(args, split_file=split_file)
     print("The length of train set is: {}".format(len(db_train)))
     print("The length of val set is: {}".format(len(db_val)))
     logging.info("Dataset split manifest: %s", split_file)

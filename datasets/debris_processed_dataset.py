@@ -95,32 +95,40 @@ class DebrisProcessedDataset(Dataset):
             raise ValueError(
                 "input sample must have {} history steps, got {}".format(self.history_steps, array.shape)
             )
-        if array.shape[-1] != self.vars_per_step:
-            raise ValueError(
-                "input sample must have {} variables in last dim, got {}".format(
-                    self.vars_per_step, array.shape
-                )
+
+        # Support both (T, H, W, C) and (T, C, H, W).
+        if array.shape[-1] == self.vars_per_step:
+            return np.transpose(array, (0, 3, 1, 2))
+        if array.shape[1] == self.vars_per_step:
+            return array
+        raise ValueError(
+            "input sample must store {} variables either in dim 1 or dim -1, got {}".format(
+                self.vars_per_step, array.shape
             )
-        return np.transpose(array, (0, 3, 1, 2))
+        )
 
     def _reshape_target(self, array):
         array = np.asarray(array, dtype=np.float32)
         if array.ndim != 4:
             raise ValueError("target sample must have 4 dimensions, got {}".format(array.shape))
-        if array.shape[-1] != self.vars_per_step:
-            raise ValueError(
-                "target sample must have {} variables in last dim, got {}".format(
-                    self.vars_per_step, array.shape
-                )
-            )
         if not 0 <= self.target_step_index < array.shape[0]:
             raise ValueError(
                 "target_step_index {} is out of range for target shape {}".format(
                     self.target_step_index, array.shape
                 )
             )
-        array = array[self.target_step_index]
-        return np.transpose(array, (2, 0, 1))
+
+        # Support both (L, H, W, C) and (L, C, H, W).
+        if array.shape[-1] == self.vars_per_step:
+            array = array[self.target_step_index]
+            return np.transpose(array, (2, 0, 1))
+        if array.shape[1] == self.vars_per_step:
+            return array[self.target_step_index]
+        raise ValueError(
+            "target sample must store {} variables either in dim 1 or dim -1, got {}".format(
+                self.vars_per_step, array.shape
+            )
+        )
 
     @staticmethod
     def _reshape_mask(array, height, width):

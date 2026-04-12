@@ -64,9 +64,21 @@ class DebrisProcessedDataset(Dataset):
         for file_path in files:
             with np.load(file_path) as data:
                 input_array = self._get_first_available_key(data, self.input_keys, "input")
-                num_samples = int(input_array.shape[0])
+                num_samples = self._infer_num_samples(input_array, "input")
             sample_refs.extend((file_path, sample_index) for sample_index in range(num_samples))
         return sample_refs
+
+    @staticmethod
+    def _infer_num_samples(array, tensor_name):
+        if array.ndim == 5:
+            return int(array.shape[0])
+        if array.ndim == 4:
+            return 1
+        raise ValueError(
+            "{} array must have shape (N, T, H, W, C) or (T, H, W, C), got {}".format(
+                tensor_name, array.shape
+            )
+        )
 
     @staticmethod
     def _get_first_available_key(data, keys, kind):
@@ -126,17 +138,14 @@ class DebrisProcessedDataset(Dataset):
         with np.load(file_path) as data:
             input_array = self._get_first_available_key(data, self.input_keys, "input")
             target_array = self._get_first_available_key(data, self.target_keys, "target")
-            x = input_array[sample_index]
-            y = target_array[sample_index]
+            x = self._select_sample(input_array, sample_index, "input")
+            y = self._select_sample(target_array, sample_index, "target")
             mask = None
             if self.return_mask:
                 for key in self.mask_keys:
                     if key in data:
                         mask_data = data[key]
-                        if mask_data.shape[0] == input_array.shape[0]:
-                            mask = mask_data[sample_index]
-                        else:
-                            mask = mask_data
+                        mask = self._select_mask(mask_data, sample_index, input_array)
                         break
 
         x = self._reshape_input(x)
@@ -153,6 +162,36 @@ class DebrisProcessedDataset(Dataset):
             return x, y, mask
 
         return x, y
+
+    @staticmethod
+    def _select_sample(array, sample_index, tensor_name):
+        if array.ndim == 5:
+            return array[sample_index]
+        if array.ndim == 4:
+            if sample_index != 0:
+                raise IndexError(
+                    "{} array stores a single sample, but sample_index={} was requested".format(
+                        tensor_name, sample_index
+                    )
+                )
+            return array
+        raise ValueError(
+            "{} array must have shape (N, T, H, W, C) or (T, H, W, C), got {}".format(
+                tensor_name, array.shape
+            )
+        )
+
+    @staticmethod
+    def _select_mask(mask_array, sample_index, input_array):
+        if mask_array.ndim == 3:
+            if input_array.ndim == 5 and mask_array.shape[0] == input_array.shape[0]:
+                return mask_array[sample_index]
+            return mask_array
+        if mask_array.ndim == 2:
+            return mask_array
+        raise ValueError(
+            "mask array must have shape (N, H, W) or (H, W), got {}".format(mask_array.shape)
+        )
 
 
 def _normalize_root_dir(data_path):

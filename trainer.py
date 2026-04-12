@@ -102,6 +102,7 @@ def trainer_hr_extreme(args, model, snapshot_path):
 
         epoch_train_loss = running_train_loss / len(train_loader)
         logging.info('Train epoch: %d : loss : %f' % (epoch_num, epoch_train_loss))
+        print("Epoch {}/{} Train Loss: {:.6f}".format(epoch_num + 1, max_epoch, epoch_train_loss), flush=True)
         writer.add_scalar('train/loss_epoch', epoch_train_loss, epoch_num)
         if (epoch_num + 1) % args.eval_interval == 0:
             model.eval()
@@ -125,6 +126,12 @@ def trainer_hr_extreme(args, model, snapshot_path):
                 writer.add_scalar('val/rmse', batch_rmse, epoch_num)
                 logging.info('Val epoch: %d : loss : %f, rmse: %f' % (
                     epoch_num, batch_loss, batch_rmse))
+                print(
+                    "Epoch {}/{} Val Loss: {:.6f}, RMSE: {:.6f}".format(
+                        epoch_num + 1, max_epoch, batch_loss, batch_rmse
+                    ),
+                    flush=True,
+                )
                 if batch_loss < best_loss:
                     save_mode_path = os.path.join(snapshot_path, 'best_model.pth')
                     torch.save(model.state_dict(), save_mode_path)

@@ -93,12 +93,26 @@ def trainer_debris_processed(args, model, snapshot_path):
     print("The length of val set is: {}".format(len(db_val)))
     logging.info("Dataset split manifest: %s", split_file)
 
-    train_loader = DataLoader(db_train, batch_size=batch_size, shuffle=True, num_workers=args.num_workers,
-                              pin_memory=pin_memory,
-                              worker_init_fn=worker_init_fn)
-    val_loader = DataLoader(db_val, batch_size=batch_size, shuffle=False, num_workers=args.num_workers,
-                            pin_memory=pin_memory,
-                            worker_init_fn=worker_init_fn)
+    train_loader_kwargs = dict(
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=pin_memory,
+        worker_init_fn=worker_init_fn,
+    )
+    val_loader_kwargs = dict(
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=pin_memory,
+        worker_init_fn=worker_init_fn,
+    )
+    if args.num_workers > 0:
+        train_loader_kwargs["prefetch_factor"] = 1
+        val_loader_kwargs["prefetch_factor"] = 1
+
+    train_loader = DataLoader(db_train, **train_loader_kwargs)
+    val_loader = DataLoader(db_val, **val_loader_kwargs)
     if args.n_gpu > 1:
         model = nn.DataParallel(model)
     model.train()

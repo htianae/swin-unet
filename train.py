@@ -64,7 +64,7 @@ parser.add_argument('--val_split', type=float, default=0.1,
                     help='validation split used when train/val/test folders do not exist')
 parser.add_argument('--test_split', type=float, default=0.1,
                     help='test split used when train/val/test folders do not exist')
-parser.add_argument("--num_workers", default=8, type=int)
+parser.add_argument("--num_workers", default=2, type=int)
 parser.add_argument("--eval_interval", default=1, type=int)
 parser.add_argument("--log_interval", default=1, type=int,
                     help='print training loss every N batches')

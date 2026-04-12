@@ -59,7 +59,7 @@ parser.add_argument('--val_split', type=float, default=0.1,
                     help='validation split used when train/val/test folders do not exist')
 parser.add_argument('--test_split', type=float, default=0.1,
                     help='test split used when train/val/test folders do not exist')
-parser.add_argument('--num_workers', type=int, default=4, help='number of dataloader workers')
+parser.add_argument('--num_workers', type=int, default=2, help='number of dataloader workers')
 parser.add_argument('--checkpoint', type=str, default='',
                     help='optional checkpoint path; defaults to <output_dir>/best_model.pth')
 parser.add_argument('--split_file', type=str, default='',
@@ -129,7 +129,14 @@ def _resolve_checkpoint(args):
 
 
 def inference(args, model, dataset, device, save_dir=None):
-    testloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+    loader_kwargs = dict(
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+    )
+    if args.num_workers > 0:
+        loader_kwargs["prefetch_factor"] = 1
+    testloader = DataLoader(dataset, **loader_kwargs)
     logging.info("%d %s iterations", len(testloader), args.split)
     model.eval()
     total_loss = 0.0

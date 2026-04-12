@@ -13,13 +13,60 @@ from .swin_transformer_unet_skip_expand_decoder_sys import SwinTransformerSys
 
 logger = logging.getLogger(__name__)
 
+
+class SharedTemporalEncoder(nn.Module):
+    def __init__(self, vars_per_step):
+        super().__init__()
+        self.encoder = nn.Sequential(
+            nn.Conv2d(vars_per_step, vars_per_step, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(vars_per_step),
+            nn.GELU(),
+            nn.Conv2d(vars_per_step, vars_per_step, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(vars_per_step),
+            nn.GELU(),
+        )
+
+    def forward(self, x):
+        return self.encoder(x)
+
+
+class TemporalConcatFusion(nn.Module):
+    def __init__(self, history_steps, vars_per_step, fused_channels):
+        super().__init__()
+        self.fusion = nn.Sequential(
+            nn.Conv2d(history_steps * vars_per_step, fused_channels, kernel_size=1, bias=False),
+            nn.BatchNorm2d(fused_channels),
+            nn.GELU(),
+        )
+
+    def forward(self, features):
+        fused = torch.cat(features, dim=1)
+        return self.fusion(fused)
+
+
 class SwinUnet(nn.Module):
     def __init__(self, config, img_size=160, num_classes=69, zero_head=False, vis=False):
         super(SwinUnet, self).__init__()
         self.num_classes = num_classes
         self.zero_head = zero_head
         self.config = config
+        self.raw_in_chans = config.MODEL.SWIN.RAW_IN_CHANS
+        self.history_steps = config.MODEL.SWIN.HISTORY_STEPS
+        self.vars_per_step = config.MODEL.SWIN.VARS_PER_STEP
         self.in_chans = config.MODEL.SWIN.IN_CHANS
+        if self.raw_in_chans != self.history_steps * self.vars_per_step:
+            raise ValueError(
+                "raw input channels ({}) must equal history_steps ({}) * vars_per_step ({})".format(
+                    self.raw_in_chans, self.history_steps, self.vars_per_step
+                )
+            )
+
+        self.shared_temporal_encoder = SharedTemporalEncoder(self.vars_per_step)
+        self.temporal_fusion = TemporalConcatFusion(
+            history_steps=self.history_steps,
+            vars_per_step=self.vars_per_step,
+            fused_channels=self.in_chans,
+        )
 
         self.swin_unet = SwinTransformerSys(img_size=config.DATA.IMG_SIZE,
                                 patch_size=config.MODEL.SWIN.PATCH_SIZE,
@@ -38,14 +85,24 @@ class SwinUnet(nn.Module):
                                 patch_norm=config.MODEL.SWIN.PATCH_NORM,
                                 use_checkpoint=config.TRAIN.USE_CHECKPOINT)
 
+    def _fuse_temporal_inputs(self, x):
+        batch_size, _, height, width = x.shape
+        x = x.view(batch_size, self.history_steps, self.vars_per_step, height, width)
+        encoded_steps = [
+            self.shared_temporal_encoder(x[:, step_index])
+            for step_index in range(self.history_steps)
+        ]
+        return self.temporal_fusion(encoded_steps)
+
     def forward(self, x):
-        if x.size(1) != self.in_chans:
+        if x.size(1) != self.raw_in_chans:
             raise ValueError(
                 "Expected input with {} channels, got {} channels.".format(
-                    self.in_chans, x.size(1)
+                    self.raw_in_chans, x.size(1)
                 )
             )
-        logits = self.swin_unet(x)
+        fused_input = self._fuse_temporal_inputs(x)
+        logits = self.swin_unet(fused_input)
         return logits
 
     def load_from(self, config):

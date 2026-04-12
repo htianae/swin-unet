@@ -66,6 +66,8 @@ parser.add_argument("--num_workers", default=8, type=int)
 parser.add_argument("--eval_interval", default=1, type=int)
 parser.add_argument("--log_interval", default=1, type=int,
                     help='print training loss every N batches')
+parser.add_argument("--grad_clip", default=1.0, type=float,
+                    help='gradient clipping norm for AdamW training')
 parser.add_argument('--pretrained_ckpt', type=str, default=None,
                     help='optional pretrained checkpoint path; mismatched first-layer weights are skipped')
 parser.add_argument('--target_step_index', type=int, default=0,

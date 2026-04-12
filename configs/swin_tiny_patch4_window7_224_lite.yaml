@@ -7,7 +7,10 @@ MODEL:
   DROP_PATH_RATE: 0.2
   PRETRAIN_CKPT: null
   SWIN:
-    IN_CHANS: 138
+    IN_CHANS: 69
+    RAW_IN_CHANS: 138
+    HISTORY_STEPS: 2
+    VARS_PER_STEP: 69
     FINAL_UPSAMPLE: "expand_first"
     EMBED_DIM: 96
     DEPTHS: [ 2, 2, 2, 2 ]

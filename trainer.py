@@ -43,6 +43,22 @@ def _compute_rmse(prediction, target):
     return torch.sqrt(((prediction - target) ** 2).mean())
 
 
+def _expand_mask(mask, target):
+    if mask.ndim == 3:
+        mask = mask.unsqueeze(1)
+    return mask.to(dtype=target.dtype).expand_as(target)
+
+
+def _masked_mse_loss(prediction, target, mask):
+    mask = _expand_mask(mask, target)
+    squared_error = (prediction - target) ** 2
+    return (squared_error * mask).sum() / mask.sum().clamp_min(1.0)
+
+
+def _masked_rmse(prediction, target, mask):
+    return torch.sqrt(_masked_mse_loss(prediction, target, mask))
+
+
 def _predict_next_frame(model, image_batch, num_target_channels):
     last_frame = image_batch[:, -num_target_channels:, :, :]
     pred_residual = model(image_batch)
@@ -86,8 +102,13 @@ def trainer_hr_extreme(args, model, snapshot_path):
     if args.n_gpu > 1:
         model = nn.DataParallel(model)
     model.train()
-    criterion = nn.MSELoss()
-    optimizer = optim.SGD(model.parameters(), lr=base_lr, momentum=0.9, weight_decay=0.0001)
+    optimizer = optim.AdamW(
+        model.parameters(),
+        lr=base_lr,
+        betas=(0.9, 0.999),
+        eps=1e-8,
+        weight_decay=0.01,
+    )
     writer = SummaryWriter(snapshot_path + '/log')
     iter_num = 0
     max_epoch = args.max_epochs
@@ -100,9 +121,10 @@ def trainer_hr_extreme(args, model, snapshot_path):
         running_train_loss = 0.0
         for i_batch, sampled_batch in tqdm(enumerate(train_loader), desc=f"Train: {epoch_num}", total=len(train_loader),
                                            leave=False):
-            image_batch, label_batch = sampled_batch
+            image_batch, label_batch, mask_batch = sampled_batch
             image_batch = image_batch.to(device=device, dtype=torch.float32, non_blocking=True)
             label_batch = label_batch.to(device=device, dtype=torch.float32, non_blocking=True)
+            mask_batch = mask_batch.to(device=device, dtype=torch.float32, non_blocking=True)
             if not torch.isfinite(image_batch).all():
                 raise ValueError(
                     "Non-finite values found in image_batch at epoch {} batch {}. {}".format(
@@ -113,6 +135,12 @@ def trainer_hr_extreme(args, model, snapshot_path):
                 raise ValueError(
                     "Non-finite values found in label_batch at epoch {} batch {}. {}".format(
                         epoch_num, i_batch, _tensor_stats("label_batch", label_batch)
+                    )
+                )
+            if not torch.isfinite(mask_batch).all():
+                raise ValueError(
+                    "Non-finite values found in mask_batch at epoch {} batch {}. {}".format(
+                        epoch_num, i_batch, _tensor_stats("mask_batch", mask_batch)
                     )
                 )
             pred_t1, pred_residual, last_frame = _predict_next_frame(model, image_batch, args.num_classes)
@@ -135,20 +163,22 @@ def trainer_hr_extreme(args, model, snapshot_path):
                         _tensor_stats("pred_t1", pred_t1),
                     )
                 )
-            loss = criterion(pred_t1, label_batch)
+            loss = _masked_mse_loss(pred_t1, label_batch, mask_batch)
             if not torch.isfinite(loss):
                 raise ValueError(
-                    "Non-finite loss at epoch {} batch {}. {} | {} | {} | {}".format(
+                    "Non-finite loss at epoch {} batch {}. {} | {} | {} | {} | {}".format(
                         epoch_num,
                         i_batch,
                         _tensor_stats("image_batch", image_batch),
                         _tensor_stats("label_batch", label_batch),
+                        _tensor_stats("mask_batch", mask_batch),
                         _tensor_stats("last_frame", last_frame),
                         _tensor_stats("pred_t1", pred_t1),
                     )
                 )
             optimizer.zero_grad()
             loss.backward()
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
             optimizer.step()
             lr_ = base_lr * (1.0 - iter_num / max_iterations) ** 0.9
             for param_group in optimizer.param_groups:
@@ -157,15 +187,17 @@ def trainer_hr_extreme(args, model, snapshot_path):
             iter_num = iter_num + 1
             writer.add_scalar('info/lr', lr_, iter_num)
             writer.add_scalar('train/loss_iter', loss.item(), iter_num)
+            writer.add_scalar('train/grad_norm', float(grad_norm), iter_num)
             running_train_loss += loss.item()
             if (i_batch + 1) % args.log_interval == 0 or i_batch == 0:
                 tqdm.write(
-                    "Epoch {}/{} Batch {}/{} Train Loss: {:.6f}".format(
+                    "Epoch {}/{} Batch {}/{} Train Loss: {:.6f}, Grad Norm: {:.6f}".format(
                         epoch_num + 1,
                         max_epoch,
                         i_batch + 1,
                         len(train_loader),
                         loss.item(),
+                        float(grad_norm),
                     )
                 )
 
@@ -180,12 +212,13 @@ def trainer_hr_extreme(args, model, snapshot_path):
             with torch.no_grad():
                 for i_batch, sampled_batch in tqdm(enumerate(val_loader), desc=f"Val: {epoch_num}",
                                                    total=len(val_loader), leave=False):
-                    image_batch, label_batch = sampled_batch
+                    image_batch, label_batch, mask_batch = sampled_batch
                     image_batch = image_batch.to(device=device, dtype=torch.float32, non_blocking=True)
                     label_batch = label_batch.to(device=device, dtype=torch.float32, non_blocking=True)
+                    mask_batch = mask_batch.to(device=device, dtype=torch.float32, non_blocking=True)
                     pred_t1, _, _ = _predict_next_frame(model, image_batch, args.num_classes)
-                    loss = criterion(pred_t1, label_batch)
-                    rmse = _compute_rmse(pred_t1, label_batch)
+                    loss = _masked_mse_loss(pred_t1, label_batch, mask_batch)
+                    rmse = _masked_rmse(pred_t1, label_batch, mask_batch)
                     running_val_loss += loss.item()
                     running_val_rmse += rmse.item()
 

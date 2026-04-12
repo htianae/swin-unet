@@ -98,6 +98,15 @@ class HRExtremeDataset(Dataset):
             raise ValueError("target must have {} channels after reshape, got {}".format(expected_channels, array.shape))
         return array
 
+    @classmethod
+    def _reshape_mask(cls, array):
+        array = np.asarray(array, dtype=np.float32)
+        while array.ndim > 2 and array.shape[0] == 1:
+            array = array[0]
+        if array.ndim != 2:
+            raise ValueError("mask must resolve to shape (H, W), got {}".format(array.shape))
+        return array
+
     def __getitem__(self, idx):
         file_path = self.files[idx]
         with np.load(file_path) as data:
@@ -124,6 +133,7 @@ class HRExtremeDataset(Dataset):
             if mask is None:
                 mask = torch.ones((x.shape[-2], x.shape[-1]), dtype=torch.float32)
             else:
+                mask = self._reshape_mask(mask)
                 mask = torch.tensor(np.asarray(mask, dtype=np.float32), dtype=torch.float32)
             return x, y, mask
 
@@ -152,6 +162,7 @@ def _make_dataset_from_files(root_dir, file_paths, input_channels, target_channe
         input_channels=input_channels,
         target_channels=target_channels,
         target_step_index=target_step_index,
+        return_mask=True,
     )
 
 
@@ -228,9 +239,27 @@ def split_hr_extreme_dataset(dataset, seed, val_split=0.1, test_split=0.1):
         "test": [dataset.files[index] for index in indices[val_end:]],
     }
     return (
-        _make_dataset_from_files(dataset.data_dir, split_files["train"]),
-        _make_dataset_from_files(dataset.data_dir, split_files["val"]),
-        _make_dataset_from_files(dataset.data_dir, split_files["test"]),
+        _make_dataset_from_files(
+            dataset.data_dir,
+            split_files["train"],
+            dataset.input_channels,
+            dataset.target_channels,
+            dataset.target_step_index,
+        ),
+        _make_dataset_from_files(
+            dataset.data_dir,
+            split_files["val"],
+            dataset.input_channels,
+            dataset.target_channels,
+            dataset.target_step_index,
+        ),
+        _make_dataset_from_files(
+            dataset.data_dir,
+            split_files["test"],
+            dataset.input_channels,
+            dataset.target_channels,
+            dataset.target_step_index,
+        ),
         split_files,
     )
 
@@ -257,18 +286,21 @@ def build_hr_extreme_datasets(
                 input_channels=input_channels,
                 target_channels=target_channels,
                 target_step_index=target_step_index,
+                return_mask=True,
             ),
             HRExtremeDataset(
                 val_dir,
                 input_channels=input_channels,
                 target_channels=target_channels,
                 target_step_index=target_step_index,
+                return_mask=True,
             ),
             HRExtremeDataset(
                 test_dir,
                 input_channels=input_channels,
                 target_channels=target_channels,
                 target_step_index=target_step_index,
+                return_mask=True,
             ),
         )
 
@@ -285,6 +317,7 @@ def build_hr_extreme_datasets(
         input_channels=input_channels,
         target_channels=target_channels,
         target_step_index=target_step_index,
+        return_mask=True,
     )
     train_dataset, val_dataset, test_dataset, split_files = split_hr_extreme_dataset(
         full_dataset,

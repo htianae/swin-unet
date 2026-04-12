@@ -61,7 +61,10 @@ _C.MODEL.LABEL_SMOOTHING = 0.1
 # Swin Transformer parameters
 _C.MODEL.SWIN = CN()
 _C.MODEL.SWIN.PATCH_SIZE = 4
-_C.MODEL.SWIN.IN_CHANS = 138
+_C.MODEL.SWIN.IN_CHANS = 69
+_C.MODEL.SWIN.RAW_IN_CHANS = 138
+_C.MODEL.SWIN.HISTORY_STEPS = 2
+_C.MODEL.SWIN.VARS_PER_STEP = 69
 _C.MODEL.SWIN.EMBED_DIM = 96
 _C.MODEL.SWIN.DEPTHS = [2, 2, 6, 2]
 _C.MODEL.SWIN.DECODER_DEPTHS = [2, 2, 6, 2]
@@ -206,7 +209,11 @@ def update_config(config, args):
     if args.cache_mode:
         config.DATA.CACHE_MODE = args.cache_mode
     if getattr(args, 'in_chans', None):
-        config.MODEL.SWIN.IN_CHANS = args.in_chans
+        config.MODEL.SWIN.RAW_IN_CHANS = args.in_chans
+        if getattr(args, 'num_classes', None):
+            config.MODEL.SWIN.VARS_PER_STEP = args.num_classes
+            config.MODEL.SWIN.HISTORY_STEPS = args.in_chans // args.num_classes
+            config.MODEL.SWIN.IN_CHANS = args.num_classes
     if getattr(args, 'num_classes', None):
         config.MODEL.NUM_CLASSES = args.num_classes
     if getattr(args, 'pretrained_ckpt', None) is not None:

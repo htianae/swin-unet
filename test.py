@@ -74,6 +74,22 @@ def _compute_rmse(prediction, target):
     return torch.sqrt(((prediction - target) ** 2).mean())
 
 
+def _expand_mask(mask, target):
+    if mask.ndim == 3:
+        mask = mask.unsqueeze(1)
+    return mask.to(dtype=target.dtype).expand_as(target)
+
+
+def _masked_mse_loss(prediction, target, mask):
+    mask = _expand_mask(mask, target)
+    squared_error = (prediction - target) ** 2
+    return (squared_error * mask).sum() / mask.sum().clamp_min(1.0)
+
+
+def _masked_rmse(prediction, target, mask):
+    return torch.sqrt(_masked_mse_loss(prediction, target, mask))
+
+
 def _predict_next_frame(model, image_batch, num_target_channels):
     last_frame = image_batch[:, -num_target_channels:, :, :]
     pred_residual = model(image_batch)
@@ -114,18 +130,18 @@ def inference(args, model, dataset, device, save_dir=None):
     testloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
     logging.info("%d %s iterations", len(testloader), args.split)
     model.eval()
-    criterion = nn.MSELoss()
     total_loss = 0.0
     total_rmse = 0.0
 
     with torch.no_grad():
         for i_batch, sampled_batch in tqdm(enumerate(testloader), total=len(testloader), desc=args.split):
-            image_batch, label_batch = sampled_batch
+            image_batch, label_batch, mask_batch = sampled_batch
             image_batch = image_batch.to(device=device, dtype=torch.float32, non_blocking=True)
             label_batch = label_batch.to(device=device, dtype=torch.float32, non_blocking=True)
+            mask_batch = mask_batch.to(device=device, dtype=torch.float32, non_blocking=True)
             pred_batch = _predict_next_frame(model, image_batch, args.num_classes)
-            loss = criterion(pred_batch, label_batch)
-            rmse = _compute_rmse(pred_batch, label_batch)
+            loss = _masked_mse_loss(pred_batch, label_batch, mask_batch)
+            rmse = _masked_rmse(pred_batch, label_batch, mask_batch)
 
             total_loss += loss.item()
             total_rmse += rmse.item()

@@ -5,18 +5,20 @@ import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
 from networks.vision_transformer import SwinUnet as ViT_seg
-from trainer import trainer_synapse
+from trainer import trainer_hr_extreme
 from config import get_config
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str,
-                    default='../data/Synapse/train_npz', help='root dir for data')
+                    default='../data/HR-Extreme', help='root dir for data')
 parser.add_argument('--dataset', type=str,
-                    default='Synapse', help='experiment_name')
+                    default='HRExtreme', help='experiment_name')
 parser.add_argument('--list_dir', type=str,
-                    default='./lists/lists_Synapse', help='list dir')
+                    default='', help='unused for HR-Extreme baseline')
 parser.add_argument('--num_classes', type=int,
-                    default=9, help='output channel of network')
+                    default=69, help='output channel of network')
+parser.add_argument('--in_chans', type=int,
+                    default=138, help='input channel of network')
 parser.add_argument('--output_dir', type=str, help='output dir')
 parser.add_argument('--max_iterations', type=int,
                     default=30000, help='maximum epoch number to train')
@@ -28,9 +30,9 @@ parser.add_argument('--n_gpu', type=int, default=1, help='total gpu')
 parser.add_argument('--deterministic', type=int, default=1,
                     help='whether use deterministic training')
 parser.add_argument('--base_lr', type=float, default=0.01,
-                    help='segmentation network learning rate')
+                    help='regression network learning rate')
 parser.add_argument('--img_size', type=int,
-                    default=224, help='input patch size of network input')
+                    default=160, help='input patch size of network input')
 parser.add_argument('--seed', type=int,
                     default=1234, help='random seed')
 parser.add_argument('--cfg', type=str, required=True, metavar="FILE", help='path to config file', )
@@ -54,15 +56,18 @@ parser.add_argument('--amp-opt-level', type=str, default='O1', choices=['O0', 'O
 parser.add_argument('--tag', help='tag of experiment')
 parser.add_argument('--eval', action='store_true', help='Perform evaluation only')
 parser.add_argument('--throughput', action='store_true', help='Test throughput only')
-# parser.add_argument("--dataset_name", default="datasets")
-parser.add_argument("--n_class", default=4, type=int)
+parser.add_argument('--val_path', type=str, default='',
+                    help='deprecated for the single-directory baseline')
+parser.add_argument('--val_split', type=float, default=0.1,
+                    help='validation split used when train/val/test folders do not exist')
+parser.add_argument('--test_split', type=float, default=0.1,
+                    help='test split used when train/val/test folders do not exist')
 parser.add_argument("--num_workers", default=8, type=int)
 parser.add_argument("--eval_interval", default=1, type=int)
+parser.add_argument('--pretrained_ckpt', type=str, default=None,
+                    help='optional pretrained checkpoint path; mismatched first-layer weights are skipped')
 
 args = parser.parse_args()
-if args.dataset == "Synapse":
-    args.root_path = os.path.join(args.root_path, "train_npz")
-config = get_config(args)
 
 if __name__ == "__main__":
     if not args.deterministic:
@@ -79,26 +84,55 @@ if __name__ == "__main__":
 
     dataset_name = args.dataset
     dataset_config = {
-        args.dataset: {
+        'HRExtreme': {
             'root_path': args.root_path,
-            'list_dir': f'./lists/{args.dataset}',
-            'num_classes': args.n_class,
+            'list_dir': '',
+            'num_classes': 69,
+            'in_chans': args.in_chans,
         },
     }
+    if dataset_name not in dataset_config:
+        raise ValueError("Unsupported dataset '{}'. This baseline is configured for HRExtreme.".format(dataset_name))
 
     if args.batch_size != 24 and args.batch_size % 6 == 0:
         args.base_lr *= args.batch_size / 24
     args.num_classes = dataset_config[dataset_name]['num_classes']
+    args.in_chans = dataset_config[dataset_name]['in_chans']
     args.root_path = dataset_config[dataset_name]['root_path']
     args.list_dir = dataset_config[dataset_name]['list_dir']
+    config = get_config(args)
 
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
-    net = ViT_seg(config, img_size=args.img_size, num_classes=args.num_classes).cuda()
-    net.load_from(config)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    net = ViT_seg(config, img_size=args.img_size, num_classes=args.num_classes).to(device)
+    if config.MODEL.PRETRAIN_CKPT:
+        net.load_from(config)
 
-    # trainer = {'Synapse': trainer_synapse}
-    trainer_synapse(args, net, args.output_dir)
+    trainer_hr_extreme(args, net, args.output_dir)
+'''
+python train.py \
+  --dataset HRExtreme \
+  --cfg configs/swin_tiny_patch4_window7_224_lite.yaml \
+  --root_path /Users/tian/Desktop/HR-extreme/HR-Extreme_SEUS_maxpool160 \
+  --output_dir ./prediction/output1
+
+python test.py \
+  --dataset HRExtreme \
+  --cfg configs/swin_tiny_patch4_window7_224_lite.yaml \
+  --root_path /Users/tian/Desktop/HR-extreme/HR-Extreme_SEUS_maxpool160 \
+  --output_dir ./prediction/output1 \
+  --split test
 
 
-# python train.py --output_dir ./model_out/datasets --dataset datasets --img_size 224 --batch_size 32 --cfg configs/swin_tiny_patch4_window7_224_lite.yaml --root_path /media/aicvi/11111bdb-a0c7-4342-9791-36af7eb70fc0/NNUNET_OUTPUT/nnunet_preprocessed/Dataset001_mm/nnUNetPlans_2d_split
+如果想把预测保存出来
+python test.py \
+  --dataset HRExtreme \
+  --cfg configs/swin_tiny_patch4_window7_224_lite.yaml \
+  --root_path /你的/npz目录 \
+  --output_dir ./model_out/weather \
+  --split test \
+  --save_predictions
+
+
+'''

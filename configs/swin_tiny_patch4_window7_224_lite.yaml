@@ -1,12 +1,16 @@
+DATA:
+  IMG_SIZE: 160
 MODEL:
   TYPE: swin
-  NAME: swin_tiny_patch4_window7_224
+  NAME: swin_tiny_patch4_window7_160
+  NUM_CLASSES: 69
   DROP_PATH_RATE: 0.2
-  PRETRAIN_CKPT: "./pretrained_ckpt/swin_tiny_patch4_window7_224.pth"
+  PRETRAIN_CKPT: null
   SWIN:
+    IN_CHANS: 138
     FINAL_UPSAMPLE: "expand_first"
     EMBED_DIM: 96
     DEPTHS: [ 2, 2, 2, 2 ]
     DECODER_DEPTHS: [ 2, 2, 2, 1]
     NUM_HEADS: [ 3, 6, 12, 24 ]
-    WINDOW_SIZE: 7
+    WINDOW_SIZE: 5

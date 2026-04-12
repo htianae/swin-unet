@@ -20,7 +20,7 @@ fi
 if [ $data_dir ]; then
     DATA_DIR=$data_dir
 else
-    DATA_DIR='datasets/Synapse'
+    DATA_DIR='../data/HR-Extreme'
 fi
 
 if [ $learning_rate ]; then
@@ -32,7 +32,7 @@ fi
 if [ $img_size ]; then
     IMG_SIZE=$img_size
 else
-    IMG_SIZE=224
+    IMG_SIZE=160
 fi
 
 if [ $batch_size ]; then
@@ -42,4 +42,4 @@ else
 fi
 
 echo "start test model"
-python test.py --dataset Synapse --cfg $CFG --root_path $DATA_DIR --max_epochs $EPOCH_TIME --output_dir $OUT_DIR --img_size $IMG_SIZE --base_lr $LEARNING_RATE --batch_size $BATCH_SIZE
+python test.py --dataset HRExtreme --cfg $CFG --root_path $DATA_DIR --output_dir $OUT_DIR --img_size $IMG_SIZE --base_lr $LEARNING_RATE --batch_size $BATCH_SIZE --split test

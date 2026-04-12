@@ -23,9 +23,9 @@ _C.DATA.BATCH_SIZE = 128
 # Path to dataset, could be overwritten by command line argument
 _C.DATA.DATA_PATH = ''
 # Dataset name
-_C.DATA.DATASET = 'imagenet'
+_C.DATA.DATASET = 'hr_extreme'
 # Input image size
-_C.DATA.IMG_SIZE = 224
+_C.DATA.IMG_SIZE = 160
 # Interpolation to resize image (random, bilinear, bicubic)
 _C.DATA.INTERPOLATION = 'bicubic'
 # Use zipped dataset instead of folder dataset
@@ -47,10 +47,10 @@ _C.MODEL.TYPE = 'swin'
 # Model name
 _C.MODEL.NAME = 'swin_tiny_patch4_window7_224'
 # Checkpoint to resume, could be overwritten by command line argument
-_C.MODEL.PRETRAIN_CKPT = './pretrained_ckpt/swin_tiny_patch4_window7_224.pth'
+_C.MODEL.PRETRAIN_CKPT = None
 _C.MODEL.RESUME = ''
 # Number of classes, overwritten in data preparation
-_C.MODEL.NUM_CLASSES = 1000
+_C.MODEL.NUM_CLASSES = 69
 # Dropout rate
 _C.MODEL.DROP_RATE = 0.0
 # Drop path rate
@@ -61,12 +61,12 @@ _C.MODEL.LABEL_SMOOTHING = 0.1
 # Swin Transformer parameters
 _C.MODEL.SWIN = CN()
 _C.MODEL.SWIN.PATCH_SIZE = 4
-_C.MODEL.SWIN.IN_CHANS = 3
+_C.MODEL.SWIN.IN_CHANS = 138
 _C.MODEL.SWIN.EMBED_DIM = 96
 _C.MODEL.SWIN.DEPTHS = [2, 2, 6, 2]
 _C.MODEL.SWIN.DECODER_DEPTHS = [2, 2, 6, 2]
 _C.MODEL.SWIN.NUM_HEADS = [3, 6, 12, 24]
-_C.MODEL.SWIN.WINDOW_SIZE = 7
+_C.MODEL.SWIN.WINDOW_SIZE = 5
 _C.MODEL.SWIN.MLP_RATIO = 4.
 _C.MODEL.SWIN.QKV_BIAS = True
 _C.MODEL.SWIN.QK_SCALE = None
@@ -195,12 +195,22 @@ def update_config(config, args):
         config.merge_from_list(args.opts)
 
     # merge from specific arguments
+    if args.dataset:
+        config.DATA.DATASET = args.dataset
+    if args.img_size:
+        config.DATA.IMG_SIZE = args.img_size
     if args.batch_size:
         config.DATA.BATCH_SIZE = args.batch_size
     if args.zip:
         config.DATA.ZIP_MODE = True
     if args.cache_mode:
         config.DATA.CACHE_MODE = args.cache_mode
+    if getattr(args, 'in_chans', None):
+        config.MODEL.SWIN.IN_CHANS = args.in_chans
+    if getattr(args, 'num_classes', None):
+        config.MODEL.NUM_CLASSES = args.num_classes
+    if getattr(args, 'pretrained_ckpt', None) is not None:
+        config.MODEL.PRETRAIN_CKPT = args.pretrained_ckpt or None
     if args.resume:
         config.MODEL.RESUME = args.resume
     if args.accumulation_steps:

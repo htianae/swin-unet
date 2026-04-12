@@ -43,6 +43,23 @@ def _compute_rmse(prediction, target):
     return torch.sqrt(((prediction - target) ** 2).mean())
 
 
+def _predict_next_frame(model, image_batch, num_target_channels):
+    last_frame = image_batch[:, -num_target_channels:, :, :]
+    pred_residual = model(image_batch)
+    pred_t1 = last_frame + pred_residual
+    return pred_t1, pred_residual, last_frame
+
+
+def _tensor_stats(name, tensor):
+    return "{} shape={} min={:.6f} max={:.6f} mean={:.6f}".format(
+        name,
+        tuple(tensor.shape),
+        tensor.min().item(),
+        tensor.max().item(),
+        tensor.mean().item(),
+    )
+
+
 def trainer_hr_extreme(args, model, snapshot_path):
     logging.basicConfig(filename=snapshot_path + "/log.txt", level=logging.INFO,
                         format='[%(asctime)s.%(msecs)03d] %(message)s', datefmt='%H:%M:%S')
@@ -86,8 +103,50 @@ def trainer_hr_extreme(args, model, snapshot_path):
             image_batch, label_batch = sampled_batch
             image_batch = image_batch.to(device=device, dtype=torch.float32, non_blocking=True)
             label_batch = label_batch.to(device=device, dtype=torch.float32, non_blocking=True)
-            outputs = model(image_batch)
-            loss = criterion(outputs, label_batch)
+            if not torch.isfinite(image_batch).all():
+                raise ValueError(
+                    "Non-finite values found in image_batch at epoch {} batch {}. {}".format(
+                        epoch_num, i_batch, _tensor_stats("image_batch", image_batch)
+                    )
+                )
+            if not torch.isfinite(label_batch).all():
+                raise ValueError(
+                    "Non-finite values found in label_batch at epoch {} batch {}. {}".format(
+                        epoch_num, i_batch, _tensor_stats("label_batch", label_batch)
+                    )
+                )
+            pred_t1, pred_residual, last_frame = _predict_next_frame(model, image_batch, args.num_classes)
+            if not torch.isfinite(pred_residual).all():
+                raise ValueError(
+                    "Non-finite values found in model residuals at epoch {} batch {}. {} | {}".format(
+                        epoch_num,
+                        i_batch,
+                        _tensor_stats("image_batch", image_batch),
+                        _tensor_stats("pred_residual", pred_residual),
+                    )
+                )
+            if not torch.isfinite(pred_t1).all():
+                raise ValueError(
+                    "Non-finite values found in reconstructed predictions at epoch {} batch {}. {} | {} | {}".format(
+                        epoch_num,
+                        i_batch,
+                        _tensor_stats("last_frame", last_frame),
+                        _tensor_stats("pred_residual", pred_residual),
+                        _tensor_stats("pred_t1", pred_t1),
+                    )
+                )
+            loss = criterion(pred_t1, label_batch)
+            if not torch.isfinite(loss):
+                raise ValueError(
+                    "Non-finite loss at epoch {} batch {}. {} | {} | {} | {}".format(
+                        epoch_num,
+                        i_batch,
+                        _tensor_stats("image_batch", image_batch),
+                        _tensor_stats("label_batch", label_batch),
+                        _tensor_stats("last_frame", last_frame),
+                        _tensor_stats("pred_t1", pred_t1),
+                    )
+                )
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -99,6 +158,16 @@ def trainer_hr_extreme(args, model, snapshot_path):
             writer.add_scalar('info/lr', lr_, iter_num)
             writer.add_scalar('train/loss_iter', loss.item(), iter_num)
             running_train_loss += loss.item()
+            if (i_batch + 1) % args.log_interval == 0 or i_batch == 0:
+                tqdm.write(
+                    "Epoch {}/{} Batch {}/{} Train Loss: {:.6f}".format(
+                        epoch_num + 1,
+                        max_epoch,
+                        i_batch + 1,
+                        len(train_loader),
+                        loss.item(),
+                    )
+                )
 
         epoch_train_loss = running_train_loss / len(train_loader)
         logging.info('Train epoch: %d : loss : %f' % (epoch_num, epoch_train_loss))
@@ -114,9 +183,9 @@ def trainer_hr_extreme(args, model, snapshot_path):
                     image_batch, label_batch = sampled_batch
                     image_batch = image_batch.to(device=device, dtype=torch.float32, non_blocking=True)
                     label_batch = label_batch.to(device=device, dtype=torch.float32, non_blocking=True)
-                    outputs = model(image_batch)
-                    loss = criterion(outputs, label_batch)
-                    rmse = _compute_rmse(outputs, label_batch)
+                    pred_t1, _, _ = _predict_next_frame(model, image_batch, args.num_classes)
+                    loss = criterion(pred_t1, label_batch)
+                    rmse = _compute_rmse(pred_t1, label_batch)
                     running_val_loss += loss.item()
                     running_val_rmse += rmse.item()
 

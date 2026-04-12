@@ -74,6 +74,13 @@ def _compute_rmse(prediction, target):
     return torch.sqrt(((prediction - target) ** 2).mean())
 
 
+def _predict_next_frame(model, image_batch, num_target_channels):
+    last_frame = image_batch[:, -num_target_channels:, :, :]
+    pred_residual = model(image_batch)
+    pred_t1 = last_frame + pred_residual
+    return pred_t1
+
+
 def _select_dataset_split(args):
     split_file = args.split_file or os.path.join(args.output_dir, 'dataset_split.json')
     train_dataset, val_dataset, test_dataset = build_hr_extreme_datasets(
@@ -116,7 +123,7 @@ def inference(args, model, dataset, device, save_dir=None):
             image_batch, label_batch = sampled_batch
             image_batch = image_batch.to(device=device, dtype=torch.float32, non_blocking=True)
             label_batch = label_batch.to(device=device, dtype=torch.float32, non_blocking=True)
-            pred_batch = model(image_batch)
+            pred_batch = _predict_next_frame(model, image_batch, args.num_classes)
             loss = criterion(pred_batch, label_batch)
             rmse = _compute_rmse(pred_batch, label_batch)
 

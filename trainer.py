@@ -133,8 +133,13 @@ def trainer_debris_processed(args, model, snapshot_path):
     for epoch_num in iterator:
         model.train()
         running_train_loss = 0.0
-        for i_batch, sampled_batch in tqdm(enumerate(train_loader), desc=f"Train: {epoch_num}", total=len(train_loader),
-                                           leave=False):
+        train_progress = tqdm(
+            enumerate(train_loader),
+            desc=f"Train: {epoch_num}",
+            total=len(train_loader),
+            leave=False,
+        )
+        for i_batch, sampled_batch in train_progress:
             image_batch, label_batch, mask_batch = sampled_batch
             image_batch = image_batch.to(device=device, dtype=torch.float32, non_blocking=True)
             label_batch = label_batch.to(device=device, dtype=torch.float32, non_blocking=True)
@@ -204,15 +209,9 @@ def trainer_debris_processed(args, model, snapshot_path):
             writer.add_scalar('train/grad_norm', float(grad_norm), iter_num)
             running_train_loss += loss.item()
             if (i_batch + 1) % args.log_interval == 0 or i_batch == 0:
-                tqdm.write(
-                    "Epoch {}/{} Batch {}/{} Train Loss: {:.6f}, Grad Norm: {:.6f}".format(
-                        epoch_num + 1,
-                        max_epoch,
-                        i_batch + 1,
-                        len(train_loader),
-                        loss.item(),
-                        float(grad_norm),
-                    )
+                train_progress.set_postfix(
+                    loss="{:.6f}".format(loss.item()),
+                    grad="{:.6f}".format(float(grad_norm)),
                 )
 
         epoch_train_loss = running_train_loss / len(train_loader)

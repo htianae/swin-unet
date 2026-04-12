@@ -28,6 +28,7 @@ def _build_hr_extreme_datasets(args, split_file):
         save_split_file=split_file,
         input_channels=args.in_chans,
         target_channels=args.num_classes,
+        target_step_index=args.target_step_index,
     )
     logging.info(
         "Dataset split sizes -> train: %d, val: %d, test: %d",

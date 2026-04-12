@@ -66,6 +66,8 @@ parser.add_argument("--num_workers", default=8, type=int)
 parser.add_argument("--eval_interval", default=1, type=int)
 parser.add_argument('--pretrained_ckpt', type=str, default=None,
                     help='optional pretrained checkpoint path; mismatched first-layer weights are skipped')
+parser.add_argument('--target_step_index', type=int, default=0,
+                    help='which future target step to use when targets contain multiple lead times')
 
 args = parser.parse_args()
 

@@ -64,6 +64,8 @@ parser.add_argument('--split_file', type=str, default='',
                     help='optional dataset split manifest; defaults to <output_dir>/dataset_split.json')
 parser.add_argument('--save_predictions', action='store_true',
                     help='save prediction and target tensors to output_dir/predictions as .npz files')
+parser.add_argument('--target_step_index', type=int, default=0,
+                    help='which future target step to use when targets contain multiple lead times')
 
 args = parser.parse_args()
 
@@ -82,6 +84,7 @@ def _select_dataset_split(args):
         split_file=split_file if os.path.isfile(split_file) else None,
         input_channels=args.in_chans,
         target_channels=args.num_classes,
+        target_step_index=args.target_step_index,
     )
     split_map = {
         'train': train_dataset,

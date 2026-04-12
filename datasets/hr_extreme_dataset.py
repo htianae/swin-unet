@@ -20,6 +20,7 @@ class HRExtremeDataset(Dataset):
         files=None,
         input_channels=None,
         target_channels=69,
+        target_step_index=0,
     ):
         self.data_dir = data_dir
         self.return_mask = return_mask
@@ -28,6 +29,7 @@ class HRExtremeDataset(Dataset):
         self.mask_keys = self.DEFAULT_MASK_KEYS
         self.input_channels = input_channels
         self.target_channels = target_channels
+        self.target_step_index = target_step_index
         if files is None:
             self.files = sorted(
                 os.path.join(data_dir, file_name)
@@ -50,19 +52,50 @@ class HRExtremeDataset(Dataset):
         raise KeyError("Unable to find {} key in file. Tried keys: {}".format(kind, keys))
 
     @staticmethod
-    def _reshape_channels(array, expected_channels, tensor_name):
+    def _squeeze_leading_unit_dims(array):
         array = np.asarray(array, dtype=np.float32)
+        while array.ndim > 3 and array.shape[0] == 1:
+            array = array[0]
+        return array
+
+    @classmethod
+    def _reshape_input(cls, array, expected_channels):
+        array = cls._squeeze_leading_unit_dims(array)
         if array.ndim < 3:
-            raise ValueError("{} must have at least 3 dimensions, got {}".format(tensor_name, array.shape))
+            raise ValueError("input must have at least 3 dimensions, got {}".format(array.shape))
 
         height, width = array.shape[-2:]
         array = array.reshape(-1, height, width)
         if expected_channels is not None and array.shape[0] != expected_channels:
-            raise ValueError(
-                "{} must have {} channels after reshape, got {}".format(
-                    tensor_name, expected_channels, array.shape
+            raise ValueError("input must have {} channels after reshape, got {}".format(expected_channels, array.shape))
+        return array
+
+    @classmethod
+    def _reshape_target(cls, array, expected_channels, target_step_index):
+        array = np.asarray(array, dtype=np.float32)
+        array = cls._squeeze_leading_unit_dims(array)
+        if array.ndim < 3:
+            raise ValueError("target must have at least 3 dimensions, got {}".format(array.shape))
+
+        if array.ndim == 4:
+            if array.shape[1] != expected_channels:
+                raise ValueError(
+                    "target temporal layout must be (T, {}, H, W), got {}".format(
+                        expected_channels, array.shape
+                    )
                 )
-            )
+            if not 0 <= target_step_index < array.shape[0]:
+                raise ValueError(
+                    "target_step_index {} is out of range for target shape {}".format(
+                        target_step_index, array.shape
+                    )
+                )
+            array = array[target_step_index]
+
+        if array.ndim != 3:
+            raise ValueError("target must resolve to shape ({}, H, W), got {}".format(expected_channels, array.shape))
+        if array.shape[0] != expected_channels:
+            raise ValueError("target must have {} channels after reshape, got {}".format(expected_channels, array.shape))
         return array
 
     def __getitem__(self, idx):
@@ -77,8 +110,12 @@ class HRExtremeDataset(Dataset):
                         mask = data[key]
                         break
 
-        x = self._reshape_channels(x, expected_channels=self.input_channels, tensor_name="input")
-        y = self._reshape_channels(y, expected_channels=self.target_channels, tensor_name="target")
+        x = self._reshape_input(x, expected_channels=self.input_channels)
+        y = self._reshape_target(
+            y,
+            expected_channels=self.target_channels,
+            target_step_index=self.target_step_index,
+        )
 
         x = torch.tensor(x, dtype=torch.float32)
         y = torch.tensor(y, dtype=torch.float32)
@@ -108,12 +145,13 @@ def _validate_split_sizes(dataset_length, val_split, test_split):
         )
 
 
-def _make_dataset_from_files(root_dir, file_paths, input_channels, target_channels):
+def _make_dataset_from_files(root_dir, file_paths, input_channels, target_channels, target_step_index):
     return HRExtremeDataset(
         root_dir,
         files=file_paths,
         input_channels=input_channels,
         target_channels=target_channels,
+        target_step_index=target_step_index,
     )
 
 
@@ -206,6 +244,7 @@ def build_hr_extreme_datasets(
     save_split_file=None,
     input_channels=None,
     target_channels=69,
+    target_step_index=0,
 ):
     train_dir = os.path.join(root_dir, "train")
     val_dir = os.path.join(root_dir, "val")
@@ -213,23 +252,39 @@ def build_hr_extreme_datasets(
 
     if os.path.isdir(train_dir) and os.path.isdir(val_dir) and os.path.isdir(test_dir):
         return (
-            HRExtremeDataset(train_dir, input_channels=input_channels, target_channels=target_channels),
-            HRExtremeDataset(val_dir, input_channels=input_channels, target_channels=target_channels),
-            HRExtremeDataset(test_dir, input_channels=input_channels, target_channels=target_channels),
+            HRExtremeDataset(
+                train_dir,
+                input_channels=input_channels,
+                target_channels=target_channels,
+                target_step_index=target_step_index,
+            ),
+            HRExtremeDataset(
+                val_dir,
+                input_channels=input_channels,
+                target_channels=target_channels,
+                target_step_index=target_step_index,
+            ),
+            HRExtremeDataset(
+                test_dir,
+                input_channels=input_channels,
+                target_channels=target_channels,
+                target_step_index=target_step_index,
+            ),
         )
 
     if split_file and os.path.isfile(split_file):
         split_files = _load_split_manifest(split_file, root_dir)
         return (
-            _make_dataset_from_files(root_dir, split_files["train"], input_channels, target_channels),
-            _make_dataset_from_files(root_dir, split_files["val"], input_channels, target_channels),
-            _make_dataset_from_files(root_dir, split_files["test"], input_channels, target_channels),
+            _make_dataset_from_files(root_dir, split_files["train"], input_channels, target_channels, target_step_index),
+            _make_dataset_from_files(root_dir, split_files["val"], input_channels, target_channels, target_step_index),
+            _make_dataset_from_files(root_dir, split_files["test"], input_channels, target_channels, target_step_index),
         )
 
     full_dataset = HRExtremeDataset(
         root_dir,
         input_channels=input_channels,
         target_channels=target_channels,
+        target_step_index=target_step_index,
     )
     train_dataset, val_dataset, test_dataset, split_files = split_hr_extreme_dataset(
         full_dataset,

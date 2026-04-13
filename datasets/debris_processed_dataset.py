@@ -21,6 +21,7 @@ class DebrisProcessedDataset(Dataset):
         history_steps=2,
         vars_per_step=33,
         target_step_index=0,
+        normalization_stats=None,
     ):
         self.data_path = os.path.abspath(data_path)
         self.root_dir = self.data_path if os.path.isdir(self.data_path) else os.path.dirname(self.data_path)
@@ -31,6 +32,8 @@ class DebrisProcessedDataset(Dataset):
         self.history_steps = history_steps
         self.vars_per_step = vars_per_step
         self.target_step_index = target_step_index
+        self.normalization_mean = None
+        self.normalization_std = None
 
         if sample_refs is None:
             self.files = self._discover_files(self.data_path)
@@ -41,6 +44,7 @@ class DebrisProcessedDataset(Dataset):
 
         if not self.sample_refs:
             raise ValueError("No samples found in {}".format(self.data_path))
+        self.set_normalization_stats(normalization_stats)
 
     def __len__(self):
         return len(self.sample_refs)
@@ -141,6 +145,45 @@ class DebrisProcessedDataset(Dataset):
             raise ValueError("mask shape {} does not match target shape ({}, {})".format(array.shape, height, width))
         return array
 
+    def set_normalization_stats(self, normalization_stats):
+        if normalization_stats is None:
+            self.normalization_mean = None
+            self.normalization_std = None
+            return
+
+        mean = np.asarray(normalization_stats["mean"], dtype=np.float32)
+        std = np.asarray(normalization_stats["std"], dtype=np.float32)
+        if mean.shape != (self.vars_per_step,):
+            raise ValueError(
+                "normalization mean must have shape ({},), got {}".format(self.vars_per_step, mean.shape)
+            )
+        if std.shape != (self.vars_per_step,):
+            raise ValueError(
+                "normalization std must have shape ({},), got {}".format(self.vars_per_step, std.shape)
+            )
+        self.normalization_mean = mean
+        self.normalization_std = np.clip(std, a_min=1e-6, a_max=None)
+
+    def denormalize_target_tensor(self, tensor):
+        if self.normalization_mean is None or self.normalization_std is None:
+            return tensor
+
+        if torch.is_tensor(tensor):
+            mean = torch.as_tensor(self.normalization_mean, dtype=tensor.dtype, device=tensor.device)
+            std = torch.as_tensor(self.normalization_std, dtype=tensor.dtype, device=tensor.device)
+            if tensor.ndim == 4:
+                return tensor * std.view(1, -1, 1, 1) + mean.view(1, -1, 1, 1)
+            if tensor.ndim == 3:
+                return tensor * std.view(-1, 1, 1) + mean.view(-1, 1, 1)
+            raise ValueError("Expected tensor with 3 or 4 dims, got {}".format(tuple(tensor.shape)))
+
+        array = np.asarray(tensor, dtype=np.float32)
+        if array.ndim == 4:
+            return array * self.normalization_std.reshape(1, -1, 1, 1) + self.normalization_mean.reshape(1, -1, 1, 1)
+        if array.ndim == 3:
+            return array * self.normalization_std.reshape(-1, 1, 1) + self.normalization_mean.reshape(-1, 1, 1)
+        raise ValueError("Expected array with 3 or 4 dims, got {}".format(array.shape))
+
     def __getitem__(self, idx):
         file_path, sample_index = self.sample_refs[idx]
         with np.load(file_path) as data:
@@ -158,6 +201,9 @@ class DebrisProcessedDataset(Dataset):
 
         x = self._reshape_input(x)
         y = self._reshape_target(y)
+        if self.normalization_mean is not None and self.normalization_std is not None:
+            x = (x - self.normalization_mean.reshape(1, -1, 1, 1)) / self.normalization_std.reshape(1, -1, 1, 1)
+            y = (y - self.normalization_mean.reshape(-1, 1, 1)) / self.normalization_std.reshape(-1, 1, 1)
         x = torch.tensor(x, dtype=torch.float32)
         y = torch.tensor(y, dtype=torch.float32)
 
@@ -227,6 +273,99 @@ def _make_dataset_from_refs(data_path, sample_refs, history_steps, vars_per_step
         vars_per_step=vars_per_step,
         target_step_index=target_step_index,
     )
+
+
+def _compute_normalization_stats(dataset):
+    sum_channels = np.zeros(dataset.vars_per_step, dtype=np.float64)
+    sumsq_channels = np.zeros(dataset.vars_per_step, dtype=np.float64)
+    count_channels = np.zeros(dataset.vars_per_step, dtype=np.float64)
+
+    for file_path, sample_index in dataset.sample_refs:
+        with np.load(file_path) as data:
+            input_array = dataset._get_first_available_key(data, dataset.input_keys, "input")
+            target_array = dataset._get_first_available_key(data, dataset.target_keys, "target")
+            x = dataset._reshape_input(dataset._select_sample(input_array, sample_index, "input"))
+            y = dataset._reshape_target(dataset._select_sample(target_array, sample_index, "target"))
+
+            mask = None
+            if dataset.return_mask:
+                for key in dataset.mask_keys:
+                    if key in data:
+                        mask_data = data[key]
+                        mask = dataset._select_mask(mask_data, sample_index, input_array)
+                        break
+
+        if mask is not None:
+            mask = dataset._reshape_mask(mask, y.shape[-2], y.shape[-1]).astype(np.float32)
+            valid_pixels = float(mask.sum())
+            if valid_pixels <= 0:
+                continue
+            x_mask = mask.reshape(1, 1, y.shape[-2], y.shape[-1])
+            y_mask = mask.reshape(1, y.shape[-2], y.shape[-1])
+            sum_channels += (x * x_mask).sum(axis=(0, 2, 3), dtype=np.float64)
+            sum_channels += (y * y_mask).sum(axis=(1, 2), dtype=np.float64)
+            sumsq_channels += ((x ** 2) * x_mask).sum(axis=(0, 2, 3), dtype=np.float64)
+            sumsq_channels += ((y ** 2) * y_mask).sum(axis=(1, 2), dtype=np.float64)
+            count_channels += valid_pixels * (x.shape[0] + 1)
+            continue
+
+        spatial_size = float(y.shape[-2] * y.shape[-1])
+        sum_channels += x.sum(axis=(0, 2, 3), dtype=np.float64)
+        sum_channels += y.sum(axis=(1, 2), dtype=np.float64)
+        sumsq_channels += (x ** 2).sum(axis=(0, 2, 3), dtype=np.float64)
+        sumsq_channels += (y ** 2).sum(axis=(1, 2), dtype=np.float64)
+        count_channels += spatial_size * (x.shape[0] + 1)
+
+    if np.any(count_channels <= 0):
+        raise ValueError("Unable to compute normalization stats; at least one channel has zero valid samples.")
+
+    mean = sum_channels / count_channels
+    variance = np.maximum(sumsq_channels / count_channels - mean ** 2, 0.0)
+    std = np.sqrt(variance)
+    std = np.where(std < 1e-6, 1.0, std)
+    return {
+        "mean": mean.astype(np.float32),
+        "std": std.astype(np.float32),
+    }
+
+
+def _save_normalization_stats(save_path, root_dir, vars_per_step, normalization_stats):
+    manifest = {
+        "root_dir": os.path.abspath(root_dir),
+        "vars_per_step": vars_per_step,
+        "mean": np.asarray(normalization_stats["mean"], dtype=np.float32).tolist(),
+        "std": np.asarray(normalization_stats["std"], dtype=np.float32).tolist(),
+    }
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    with open(save_path, "w", encoding="utf-8") as file_obj:
+        json.dump(manifest, file_obj, indent=2, sort_keys=True)
+
+
+def _load_normalization_stats(normalization_file, data_path, vars_per_step):
+    with open(normalization_file, "r", encoding="utf-8") as file_obj:
+        manifest = json.load(file_obj)
+
+    root_dir = _normalize_root_dir(data_path)
+    manifest_root = os.path.abspath(manifest.get("root_dir", root_dir))
+    if manifest_root != root_dir:
+        raise ValueError(
+            "Normalization file was created for root_dir={}, but current root_dir={}".format(
+                manifest_root, root_dir
+            )
+        )
+
+    manifest_vars_per_step = int(manifest.get("vars_per_step", vars_per_step))
+    if manifest_vars_per_step != vars_per_step:
+        raise ValueError(
+            "Normalization file expects vars_per_step={}, but current vars_per_step={}".format(
+                manifest_vars_per_step, vars_per_step
+            )
+        )
+
+    return {
+        "mean": np.asarray(manifest["mean"], dtype=np.float32),
+        "std": np.asarray(manifest["std"], dtype=np.float32),
+    }
 
 
 def _save_split_manifest(save_path, root_dir, seed, val_split, test_split, split_refs):
@@ -342,49 +481,87 @@ def build_debris_processed_datasets(
     history_steps=2,
     vars_per_step=33,
     target_step_index=0,
+    normalize=True,
+    normalization_file=None,
+    save_normalization_file=None,
 ):
+    normalization_stats = None
+    if normalize and normalization_file and os.path.isfile(normalization_file):
+        normalization_stats = _load_normalization_stats(normalization_file, data_path, vars_per_step)
+
     train_dir = os.path.join(data_path, "train")
     val_dir = os.path.join(data_path, "val")
     test_dir = os.path.join(data_path, "test")
 
     if os.path.isdir(train_dir) and os.path.isdir(val_dir) and os.path.isdir(test_dir):
-        return (
-            DebrisProcessedDataset(train_dir, return_mask=True, history_steps=history_steps,
-                                   vars_per_step=vars_per_step, target_step_index=target_step_index),
-            DebrisProcessedDataset(val_dir, return_mask=True, history_steps=history_steps,
-                                   vars_per_step=vars_per_step, target_step_index=target_step_index),
-            DebrisProcessedDataset(test_dir, return_mask=True, history_steps=history_steps,
-                                   vars_per_step=vars_per_step, target_step_index=target_step_index),
+        train_dataset = DebrisProcessedDataset(
+            train_dir,
+            return_mask=True,
+            history_steps=history_steps,
+            vars_per_step=vars_per_step,
+            target_step_index=target_step_index,
         )
-
-    if split_file and os.path.isfile(split_file):
+        val_dataset = DebrisProcessedDataset(
+            val_dir,
+            return_mask=True,
+            history_steps=history_steps,
+            vars_per_step=vars_per_step,
+            target_step_index=target_step_index,
+        )
+        test_dataset = DebrisProcessedDataset(
+            test_dir,
+            return_mask=True,
+            history_steps=history_steps,
+            vars_per_step=vars_per_step,
+            target_step_index=target_step_index,
+        )
+    elif split_file and os.path.isfile(split_file):
         split_refs = _load_split_manifest(split_file, data_path)
-        return (
-            _make_dataset_from_refs(data_path, split_refs["train"], history_steps, vars_per_step, target_step_index),
-            _make_dataset_from_refs(data_path, split_refs["val"], history_steps, vars_per_step, target_step_index),
-            _make_dataset_from_refs(data_path, split_refs["test"], history_steps, vars_per_step, target_step_index),
+        train_dataset = _make_dataset_from_refs(
+            data_path, split_refs["train"], history_steps, vars_per_step, target_step_index
         )
-
-    full_dataset = DebrisProcessedDataset(
-        data_path,
-        return_mask=True,
-        history_steps=history_steps,
-        vars_per_step=vars_per_step,
-        target_step_index=target_step_index,
-    )
-    train_dataset, val_dataset, test_dataset, split_refs = split_debris_processed_dataset(
-        full_dataset,
-        seed=seed,
-        val_split=val_split,
-        test_split=test_split,
-    )
-    if save_split_file:
-        _save_split_manifest(
-            save_split_file,
-            root_dir=_normalize_root_dir(data_path),
+        val_dataset = _make_dataset_from_refs(
+            data_path, split_refs["val"], history_steps, vars_per_step, target_step_index
+        )
+        test_dataset = _make_dataset_from_refs(
+            data_path, split_refs["test"], history_steps, vars_per_step, target_step_index
+        )
+    else:
+        full_dataset = DebrisProcessedDataset(
+            data_path,
+            return_mask=True,
+            history_steps=history_steps,
+            vars_per_step=vars_per_step,
+            target_step_index=target_step_index,
+        )
+        train_dataset, val_dataset, test_dataset, split_refs = split_debris_processed_dataset(
+            full_dataset,
             seed=seed,
             val_split=val_split,
             test_split=test_split,
-            split_refs=split_refs,
         )
+        if save_split_file:
+            _save_split_manifest(
+                save_split_file,
+                root_dir=_normalize_root_dir(data_path),
+                seed=seed,
+                val_split=val_split,
+                test_split=test_split,
+                split_refs=split_refs,
+            )
+
+    if normalize:
+        if normalization_stats is None:
+            normalization_stats = _compute_normalization_stats(train_dataset)
+            if save_normalization_file:
+                _save_normalization_stats(
+                    save_normalization_file,
+                    root_dir=_normalize_root_dir(data_path),
+                    vars_per_step=vars_per_step,
+                    normalization_stats=normalization_stats,
+                )
+        train_dataset.set_normalization_stats(normalization_stats)
+        val_dataset.set_normalization_stats(normalization_stats)
+        test_dataset.set_normalization_stats(normalization_stats)
+
     return train_dataset, val_dataset, test_dataset

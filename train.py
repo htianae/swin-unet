@@ -74,6 +74,8 @@ parser.add_argument('--pretrained_ckpt', type=str, default=None,
                     help='optional pretrained checkpoint path; mismatched first-layer weights are skipped')
 parser.add_argument('--target_step_index', type=int, default=0,
                     help='which future target step to use when targets contain multiple lead times')
+parser.add_argument('--disable_zscore_normalization', action='store_true',
+                    help='disable dataset z-score normalization')
 
 args = parser.parse_args()
 

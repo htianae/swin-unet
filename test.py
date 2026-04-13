@@ -68,6 +68,8 @@ parser.add_argument('--save_predictions', action='store_true',
                     help='save prediction and target tensors to output_dir/predictions as .npz files')
 parser.add_argument('--target_step_index', type=int, default=0,
                     help='which future target step to use when targets contain multiple lead times')
+parser.add_argument('--disable_zscore_normalization', action='store_true',
+                    help='disable dataset z-score normalization')
 
 args = parser.parse_args()
 
@@ -101,6 +103,7 @@ def _predict_next_frame(model, image_batch, num_target_channels):
 
 def _select_dataset_split(args):
     split_file = args.split_file or os.path.join(args.output_dir, 'dataset_split.json')
+    normalization_file = os.path.join(args.output_dir, 'normalization_stats.json')
     train_dataset, val_dataset, test_dataset = build_debris_processed_datasets(
         args.root_path,
         seed=args.seed,
@@ -110,6 +113,9 @@ def _select_dataset_split(args):
         history_steps=args.history_steps,
         vars_per_step=args.num_classes,
         target_step_index=args.target_step_index,
+        normalize=not args.disable_zscore_normalization,
+        normalization_file=normalization_file if os.path.isfile(normalization_file) else None,
+        save_normalization_file=normalization_file,
     )
     split_map = {
         'train': train_dataset,
@@ -141,6 +147,7 @@ def inference(args, model, dataset, device, save_dir=None):
     model.eval()
     total_loss = 0.0
     total_rmse = 0.0
+    total_rmse_raw = 0.0
 
     with torch.no_grad():
         for i_batch, sampled_batch in tqdm(enumerate(testloader), total=len(testloader), desc=args.split):
@@ -151,24 +158,34 @@ def inference(args, model, dataset, device, save_dir=None):
             pred_batch = _predict_next_frame(model, image_batch, args.num_classes)
             loss = _masked_mse_loss(pred_batch, label_batch, mask_batch)
             rmse = _masked_rmse(pred_batch, label_batch, mask_batch)
+            pred_batch_raw = dataset.denormalize_target_tensor(pred_batch)
+            label_batch_raw = dataset.denormalize_target_tensor(label_batch)
+            rmse_raw = _masked_rmse(pred_batch_raw, label_batch_raw, mask_batch)
 
             total_loss += loss.item()
             total_rmse += rmse.item()
+            total_rmse_raw += rmse_raw.item()
 
             if save_dir is not None:
+                pred_to_save = pred_batch_raw
+                target_to_save = label_batch_raw
                 for sample_offset in range(pred_batch.shape[0]):
                     sample_id = i_batch * args.batch_size + sample_offset
                     save_path = os.path.join(save_dir, "sample_{:05d}.npz".format(sample_id))
                     np.savez_compressed(
                         save_path,
-                        prediction=pred_batch[sample_offset].cpu().numpy().astype(np.float32),
-                        target=label_batch[sample_offset].cpu().numpy().astype(np.float32),
+                        prediction=pred_to_save[sample_offset].cpu().numpy().astype(np.float32),
+                        target=target_to_save[sample_offset].cpu().numpy().astype(np.float32),
                     )
 
     mean_loss = total_loss / len(testloader)
     mean_rmse = total_rmse / len(testloader)
-    logging.info('%s loss: %f, rmse: %f', args.split, mean_loss, mean_rmse)
-    return mean_loss, mean_rmse
+    mean_rmse_raw = total_rmse_raw / len(testloader)
+    if args.disable_zscore_normalization:
+        logging.info('%s loss: %f, rmse: %f', args.split, mean_loss, mean_rmse)
+    else:
+        logging.info('%s loss: %f, rmse(z): %f, rmse(raw): %f', args.split, mean_loss, mean_rmse, mean_rmse_raw)
+    return mean_loss, mean_rmse, mean_rmse_raw
 
 
 if __name__ == "__main__":
@@ -222,6 +239,8 @@ if __name__ == "__main__":
     logging.info("checkpoint load result: %s", msg)
     logging.info("evaluating %s split with %d samples", args.split, len(dataset))
     logging.info("split manifest: %s", args.split_file or os.path.join(args.output_dir, 'dataset_split.json'))
+    if not args.disable_zscore_normalization:
+        logging.info("normalization stats: %s", os.path.join(args.output_dir, 'normalization_stats.json'))
 
     save_dir = None
     if args.save_predictions:

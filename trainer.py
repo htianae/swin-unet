@@ -19,6 +19,7 @@ def _seed_worker(worker_id, base_seed):
 
 
 def _build_debris_processed_datasets(args, split_file):
+    normalization_file = os.path.join(os.path.dirname(split_file), "normalization_stats.json")
     train_dataset, val_dataset, test_dataset = build_debris_processed_datasets(
         args.root_path,
         seed=args.seed,
@@ -29,6 +30,9 @@ def _build_debris_processed_datasets(args, split_file):
         history_steps=args.history_steps,
         vars_per_step=args.num_classes,
         target_step_index=args.target_step_index,
+        normalize=not args.disable_zscore_normalization,
+        normalization_file=normalization_file if os.path.isfile(normalization_file) else None,
+        save_normalization_file=normalization_file,
     )
     logging.info(
         "Dataset split sizes -> train: %d, val: %d, test: %d",
@@ -36,6 +40,8 @@ def _build_debris_processed_datasets(args, split_file):
         len(val_dataset),
         len(test_dataset),
     )
+    if not args.disable_zscore_normalization:
+        logging.info("Normalization stats: %s", normalization_file)
     return train_dataset, val_dataset
 
 
@@ -222,6 +228,7 @@ def trainer_debris_processed(args, model, snapshot_path):
             model.eval()
             running_val_loss = 0.0
             running_val_rmse = 0.0
+            running_val_rmse_raw = 0.0
             with torch.no_grad():
                 for i_batch, sampled_batch in tqdm(enumerate(val_loader), desc=f"Val: {epoch_num}",
                                                    total=len(val_loader), leave=False):
@@ -232,21 +239,37 @@ def trainer_debris_processed(args, model, snapshot_path):
                     pred_t1, _, _ = _predict_next_frame(model, image_batch, args.num_classes)
                     loss = _masked_mse_loss(pred_t1, label_batch, mask_batch)
                     rmse = _masked_rmse(pred_t1, label_batch, mask_batch)
+                    pred_t1_raw = db_val.denormalize_target_tensor(pred_t1)
+                    label_batch_raw = db_val.denormalize_target_tensor(label_batch)
+                    rmse_raw = _masked_rmse(pred_t1_raw, label_batch_raw, mask_batch)
                     running_val_loss += loss.item()
                     running_val_rmse += rmse.item()
+                    running_val_rmse_raw += rmse_raw.item()
 
                 batch_loss = running_val_loss / len(val_loader)
                 batch_rmse = running_val_rmse / len(val_loader)
+                batch_rmse_raw = running_val_rmse_raw / len(val_loader)
                 writer.add_scalar('val/loss', batch_loss, epoch_num)
                 writer.add_scalar('val/rmse', batch_rmse, epoch_num)
-                logging.info('Val epoch: %d : loss : %f, rmse: %f' % (
-                    epoch_num, batch_loss, batch_rmse))
-                print(
-                    "Epoch {}/{} Val Loss: {:.6f}, RMSE: {:.6f}".format(
-                        epoch_num + 1, max_epoch, batch_loss, batch_rmse
-                    ),
-                    flush=True,
-                )
+                if not args.disable_zscore_normalization:
+                    writer.add_scalar('val/rmse_raw', batch_rmse_raw, epoch_num)
+                    logging.info('Val epoch: %d : loss : %f, rmse: %f, rmse_raw: %f' % (
+                        epoch_num, batch_loss, batch_rmse, batch_rmse_raw))
+                    print(
+                        "Epoch {}/{} Val Loss: {:.6f}, RMSE(z): {:.6f}, RMSE(raw): {:.6f}".format(
+                            epoch_num + 1, max_epoch, batch_loss, batch_rmse, batch_rmse_raw
+                        ),
+                        flush=True,
+                    )
+                else:
+                    logging.info('Val epoch: %d : loss : %f, rmse: %f' % (
+                        epoch_num, batch_loss, batch_rmse))
+                    print(
+                        "Epoch {}/{} Val Loss: {:.6f}, RMSE: {:.6f}".format(
+                            epoch_num + 1, max_epoch, batch_loss, batch_rmse
+                        ),
+                        flush=True,
+                    )
                 if batch_loss < best_loss:
                     save_mode_path = os.path.join(snapshot_path, 'best_model.pth')
                     torch.save(model.state_dict(), save_mode_path)
